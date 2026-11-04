@@ -12,6 +12,10 @@ dsh plugin add github:Little-Mostima/dsh-goal-board
 
 装好重启桌面端。清单数据落在 `.dsh\goal-board\data.json`，卸载插件不会删它。
 
+不想自己敲命令，就把下面这句直接发给任意 agent：
+
+> 帮我安装 dsh-goal-board 插件：`dsh plugin add github:Little-Mostima/dsh-goal-board`，装完重启桌面端，然后告诉我目标清单面板在哪。
+
 ## 文件
 
 | 文件 | 作用 |
@@ -19,7 +23,7 @@ dsh plugin add github:Little-Mostima/dsh-goal-board
 | `index.js` | 服务端：`goal_board_update` 工具、每轮注入、HTTP API、过期认领自动释放与自动归档 |
 | `client.js` | 面板界面（Web 平台客户端插件）：卡片拖动换区、认领徽章、备注折叠 |
 | `cordis.patch.yml` | 插件管理器的挂载清单 |
-| `smoke.test.mjs` | 自测：临时 DSH_HOME 跑假 ctx，14 项断言，不碰真实清单 |
+| `smoke.test.mjs` | 自测：临时 DSH_HOME 跑假 ctx，15 项断言，不碰真实清单 |
 | `locale/` | 界面文案 |
 | `icon.svg` | 图标 |
 
@@ -27,7 +31,8 @@ dsh plugin add github:Little-Mostima/dsh-goal-board
 
 - 认领带心跳，30 分钟没动静自动释放，卡片回到「排队中」，不用人点（`DSH_GOAL_BOARD_TTL_MS` 可改，调试用）。
 - 目标做完由 agent 核对产出、填产出指针后归档，然后从清单移除。
-- 会话登记最近 2 小时的活动：清单里没有卡的会话，每轮注入会点名，面板也会提示，防止「干了很久但没有记录」。
+- 会话登记最近 2 小时的活动：清单里没有卡的会话，每轮注入会点名要求先开卡，防止「干了很久但没有记录」。
+- 手动删掉的目标会留墓碑（`.dsh\goal-board\tombstones.json`），之后每轮注入都会提醒 agent 不要重建、不要接着做。
 
 ## 数据不在这个仓库里
 
