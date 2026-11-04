@@ -345,7 +345,7 @@ function renderInjection(agent) {
   const project = findProjectByCwd(cwd);
   if (!project) {
     touchSession(agent, cwd, false);
-    return `【目标清单】当前文件夹 ${cwd} 还没归属任何项目。要在这里开工就直接 goal_board_update add_goal——会按这个文件夹自动建项目「${path.basename(cwd)}」；如果是已有项目的子目录，用 bind_folder 绑过去。`;
+    return `【目标清单】你正在 ${cwd} 干活，但这个文件夹还没归属任何项目——现在你做的事用户在清单上看不到。动手前先调一次 goal_board_update：这个目录属于已有项目就用 bind_folder 归过去，不属于就直接 add_goal（会按文件夹名「${path.basename(cwd)}」自动建项目）。这一步不能跳过，做完再继续手上的活。`;
   }
 
   const meId = sessionInfo(agent).id;
@@ -380,7 +380,7 @@ function renderInjection(agent) {
   if (tombLine) lines.push(tombLine);
   if (!mine) {
     lines.push(
-      `⚠ 本会话（${sessionInfo(agent).label}）在清单里还没有任何记录：你正在做的事只要超过一两步，就先 add_goal 开卡（不用问用户）、add_item 记账，否则用户看不到你做到哪了。`,
+      `⚠ 本会话（${sessionInfo(agent).label}）在清单里还没有任何记录——先 goal_board_update add_goal 开一张卡（不用问用户），把现在手上的活写成条目，再继续。没有卡 = 用户看不到你做到哪了。`,
     );
   }
   const focus = active[0];
