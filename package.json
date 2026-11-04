@@ -1,6 +1,6 @@
 {
   "name": "dsh-goal-board",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "跨会话目标清单：项目 → 目标 → 条目，每轮自动提醒 agent 该做什么、做到哪了，完成后归档。",
   "license": "MIT",
