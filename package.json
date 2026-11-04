@@ -1,9 +1,24 @@
 {
   "name": "dsh-goal-board",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "跨会话目标清单：项目 → 目标 → 条目，每轮自动提醒 agent 该做什么、做到哪了，完成后归档。",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Little-Mostima/dsh-goal-board.git"
+  },
+  "homepage": "https://github.com/Little-Mostima/dsh-goal-board#readme",
+  "bugs": {
+    "url": "https://github.com/Little-Mostima/dsh-goal-board/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "goal",
+    "kanban",
+    "task-board"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -18,7 +33,7 @@
     "icon.svg"
   ],
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.7"
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.2.1-0 || >=0.2.1-rc.1 <0.3.0-0"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/dsh-tools": {

@@ -2,6 +2,16 @@
 
 DeepSeek Harness 的「目标清单」插件：给人和 agent 共用一块看板，按 **项目 → 目标 → 条目** 三层组织，每轮把当前工作注入给 agent，任务做完由 agent 核对产出后自动归档。
 
+## 安装
+
+在 DSH 里添加插件，指向本仓库：
+
+```
+dsh plugin add github:Little-Mostima/dsh-goal-board
+```
+
+装好重启桌面端。清单数据落在 `.dsh\goal-board\data.json`，卸载插件不会删它。
+
 ## 文件
 
 | 文件 | 作用 |
