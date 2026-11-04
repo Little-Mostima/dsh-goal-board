@@ -12,9 +12,19 @@ dsh plugin add github:Little-Mostima/dsh-goal-board
 
 装好重启桌面端。清单数据落在 `.dsh\goal-board\data.json`，卸载插件不会删它。
 
-不想自己敲命令，就把下面这句直接发给任意 agent：
+不想自己敲命令，就把下面这句直接发给任意 agent（安装、更新都用它）：
 
-> 帮我安装 dsh-goal-board 插件：`dsh plugin add github:Little-Mostima/dsh-goal-board`，装完重启桌面端，然后告诉我目标清单面板在哪。
+> 帮我安装或更新 dsh-goal-board 插件：`dsh plugin add github:Little-Mostima/dsh-goal-board`（已经装过就再执行一次，会覆盖成最新版），装完重启桌面端，然后告诉我目标清单面板在哪、当前版本号是多少。
+
+## 更新
+
+重新执行同一条命令即可覆盖成最新版，然后重启桌面端：
+
+```
+dsh plugin add github:Little-Mostima/dsh-goal-board
+```
+
+版本号看 `package.json` 的 `version`，或仓库的 tag（`v0.2.0` 起）。
 
 ## 文件
 
