@@ -1,6 +1,7 @@
 // 冒烟测试：假 ctx 跑一遍插件入口 + 工具 + 面板 API，验证改完还能加载、能自动释放认领。
 // 用完即删，不留在插件目录里。
 import { mkdtemp, rm, readFile } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import os from 'node:os';
 
@@ -111,6 +112,47 @@ await new Promise((res) => setTimeout(res, 150));
 const state2 = await readState();
 const loose = (state2.sessions ?? []).find((s) => s.id === 'sess-second-999999');
 ok('面板能看到未记账会话', !!loose && loose.hasCard === false && loose.turns >= 1, JSON.stringify(loose));
+
+// 删掉正在做的那条，下一条要自动接上，卡片不能卡在「没人认领」。
+r = await upd({ action: 'add_item', goal: '冒烟目标', text: '第二条' });
+const del = await upd({ action: 'delete_item', goal: '冒烟目标', item: '第二条', confirm: true });
+ok('删条目后下一条自动接手', /第一条/.test(del.text) && /doing/.test(del.text), del.text.split('\n').find((l) => l.includes('第一条')) || '');
+
+// 面板的写接口：POST 分发、读 body、落盘、回全量状态，一条链路走通。
+const post = (pathname, payload) =>
+  new Promise((resolve, reject) => {
+    const req = new EventEmitter();
+    req.method = 'POST';
+    req.url = pathname;
+    req.headers = { 'x-goal-board': '1' };
+    const res = {
+      headersSent: false,
+      statusCode: 0,
+      setHeader() {},
+      writeHead(status) {
+        this.statusCode = status;
+      },
+      end(body) {
+        resolve({ status: this.statusCode, data: JSON.parse(body) });
+      },
+    };
+    setTimeout(() => {
+      req.emit('data', Buffer.from(JSON.stringify(payload)));
+      req.emit('end');
+    }, 0);
+    apiHandler(req, res).catch(reject);
+  });
+
+const moved = await post('/goal-board/api/move', {
+  projectId: state.projects[0].id,
+  goalId: goal.id,
+  toStatus: 'suspended',
+});
+ok(
+  '面板写接口改状态并落盘',
+  moved.status === 200 && moved.data.projects[0].goals[0].status === 'suspended',
+  'status=' + moved.data.projects[0].goals[0].status,
+);
 
 await rm(home, { recursive: true, force: true });
 console.log(results.join('\n'));

@@ -132,7 +132,8 @@ function touchClaims(project, meId) {
   if (changed) save().catch(() => {});
 }
 
-/** 把某个会话（默认：本会话）在这些条目上的认领摘掉。 */function releaseClaims(project, { sessionId, goalId, itemId }) {
+/** 把某个会话（默认：本会话）在这些条目上的认领摘掉。 */
+function releaseClaims(project, { sessionId, goalId, itemId }) {
   let removed = 0;
   for (const goal of project.goals ?? []) {
     if (goalId && goal.id !== goalId) continue;
@@ -430,7 +431,6 @@ function renderInjection(agent) {
 }
 
 const GOAL_STATUS_LABEL = { active: '进行中', suspended: '搁置', done: '已完成' };
-const ITEM_STATUS_LABEL = { todo: 'todo', doing: 'doing', done: 'done', blocked: 'blocked' };
 
 /** 工具输出用的完整清单：带 id，方便 agent 精确引用。 */
 function renderFull(project) {
@@ -448,7 +448,7 @@ function renderFull(project) {
     }
     const focusItem = goal.items.find((i) => i.status === 'doing');
     for (const item of goal.items) {
-      const tag = item.status === 'doing' && item.id === focusItem?.id ? 'doing·当前焦点' : ITEM_STATUS_LABEL[item.status] ?? item.status;
+      const tag = item.status === 'doing' && item.id === focusItem?.id ? 'doing·当前焦点' : item.status;
       const note = item.note ? ` 备注：${item.note}` : '';
       lines.push(`  - ${item.id} [${tag}] ${item.text}${note}`);
     }
@@ -468,6 +468,11 @@ function renderArchive(projectId) {
 }
 
 // ---------------------------------------------------------------- 变更
+
+function attachFolder(project, folder) {
+  const target = normPath(folder);
+  if (target && !project.folders.some((f) => normPath(f) === target)) project.folders.push(folder);
+}
 
 function ensureProject(ref, exec, { create = false, name = '' } = {}) {
   const existing = resolveProject(ref, exec);
@@ -542,6 +547,16 @@ function archiveGoal(project, goal, pointer) {
 
 // ---------------------------------------------------------------- 工具
 
+// 两个工具都只回一段文本，输出声明和渲染一样，抽出来别抄两遍。
+const TEXT_RESULT = {
+  schema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: { text: { type: 'string', required: true } },
+  },
+  render: (_args, value) => [{ type: 'text', text: value.text }],
+};
+
 function readTool(defineTool) {
   return defineTool({
     name: 'goal_board_read',
@@ -557,14 +572,7 @@ function readTool(defineTool) {
         description: 'Also list archived (finished) goals.',
       },
     },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: { text: { type: 'string', required: true } },
-      },
-      render: (_args, value) => [{ type: 'text', text: value.text }],
-    },
+    output: TEXT_RESULT,
     timeoutMs: 10_000,
     isConcurrencySafe() {
       return true;
@@ -676,14 +684,7 @@ function updateTool(defineTool) {
         description: 'Required true for delete_goal / delete_item: confirms the user agreed to delete.',
       },
     },
-    output: {
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: { text: { type: 'string', required: true } },
-      },
-      render: (_args, value) => [{ type: 'text', text: value.text }],
-    },
+    output: TEXT_RESULT,
     timeoutMs: 10_000,
     isConcurrencySafe() {
       return false;
@@ -697,10 +698,7 @@ function updateTool(defineTool) {
 
       if (action === 'create_project') {
         if (!project) throw new Error('create_project 需要 name');
-        if (args.folder) {
-          const folder = normPath(args.folder);
-          if (folder && !project.folders.some((f) => normPath(f) === folder)) project.folders.push(args.folder);
-        }
+        if (args.folder) attachFolder(project, args.folder);
         await save();
         return { text: renderFull(project) };
       }
@@ -713,8 +711,7 @@ function updateTool(defineTool) {
 
       if (action === 'bind_folder') {
         if (!args.folder) throw new Error('bind_folder 需要 folder');
-        const folder = normPath(args.folder);
-        if (!project.folders.some((f) => normPath(f) === folder)) project.folders.push(args.folder);
+        attachFolder(project, args.folder);
         await save();
         return { text: renderFull(project) };
       }
@@ -779,6 +776,8 @@ function updateTool(defineTool) {
           if (!item) throw new Error(`没有找到条目：${args.item ?? '（未提供）'}`);
           if (!args.confirm) throw new Error('delete_item 需要 confirm:true（先问用户，确认后再删）');
           goal.items = goal.items.filter((i) => i.id !== item.id);
+          // 删掉的可能是唯一在做的条目：让下一条接上，卡片才不会卡在「没人认领」。
+          autoAdvance(goal, exec.agent);
           break;
         }
         case 'reorder_items': {
@@ -910,28 +909,40 @@ function statePayload() {
       cwd: r.cwd ?? '',
       turns: r.turns ?? 0,
       hasCard: !!r.hasCard,
+      // 文件夹还没归到任何项目的会话不算「忘了记账」——它还什么都没开始。
+      inProject: !!(r.cwd && findProjectByCwd(r.cwd)),
       lastSeen: r.lastSeen ?? 0,
     })),
   };
 }
 
-function applyMove(body) {
+// 四个面板动作共用同一套「找项目 / 找目标 / 回活跃态」，统一在这里，别各写一遍。
+function needProject(body) {
   const project = projectRef(body.projectId);
   if (!project) throw new Error('项目不存在');
+  return project;
+}
+
+function needGoal(project, body) {
   const goal = goalRef(project, body.goalId);
   if (!goal) throw new Error('目标不存在');
-  const toStatus = body.toStatus;
-  if (!GOAL_STATUSES.includes(toStatus)) throw new Error('目标状态不合法');
+  return goal;
+}
+
+function resetToActive(goal) {
+  goal.completedAt = null;
+  goal.pointer = null;
+}
+
+function applyMove(body) {
+  const project = needProject(body);
+  const goal = needGoal(project, body);
+  if (!GOAL_STATUSES.includes(body.toStatus)) throw new Error('目标状态不合法');
   const goals = project.goals;
-  const index = goals.findIndex((g) => g.id === goal.id);
-  if (index < 0) throw new Error('目标不存在');
-  goals.splice(index, 1);
-  goal.status = toStatus;
-  if (toStatus === 'active') {
-    goal.completedAt = null;
-    goal.pointer = null;
-  }
-  const sameStatus = goals.filter((g) => g.status === toStatus);
+  goals.splice(goals.indexOf(goal), 1);
+  goal.status = body.toStatus;
+  if (goal.status === 'active') resetToActive(goal);
+  const sameStatus = goals.filter((g) => g.status === goal.status);
   const toIndex = Math.max(0, Math.min(Number(body.toIndex ?? sameStatus.length), sameStatus.length));
   const target = sameStatus[toIndex];
   if (target) goals.splice(goals.indexOf(target), 0, goal);
@@ -939,10 +950,8 @@ function applyMove(body) {
 }
 
 function applyUpdate(body) {
-  const project = projectRef(body.projectId);
-  if (!project) throw new Error('项目不存在');
-  const goal = goalRef(project, body.goalId);
-  if (!goal) throw new Error('目标不存在');
+  const project = needProject(body);
+  const goal = needGoal(project, body);
   if (body.pointer !== undefined) {
     const pointer = String(body.pointer).trim();
     if (!pointer) throw new Error('完成目标必须填产出指针');
@@ -956,19 +965,14 @@ function applyUpdate(body) {
   if (body.status !== undefined) {
     if (!GOAL_STATUSES.includes(body.status)) throw new Error('目标状态不合法');
     goal.status = body.status;
-    if (body.status === 'active') {
-      goal.completedAt = null;
-      goal.pointer = null;
-    }
+    if (goal.status === 'active') resetToActive(goal);
   }
 }
 
 function applyDelete(body) {
-  const project = projectRef(body.projectId);
-  if (!project) throw new Error('项目不存在');
+  const project = needProject(body);
   if (body.itemId) {
-    const goal = goalRef(project, body.goalId);
-    if (!goal) throw new Error('目标不存在');
+    const goal = needGoal(project, body);
     const before = goal.items.length;
     goal.items = goal.items.filter((i) => i.id !== body.itemId);
     if (goal.items.length === before) throw new Error('条目不存在');
@@ -984,8 +988,7 @@ function applyDelete(body) {
 }
 
 function applyRelease(body) {
-  const project = projectRef(body.projectId);
-  if (!project) throw new Error('项目不存在');
+  const project = needProject(body);
   const removed = releaseClaims(project, {
     sessionId: body.sessionId ? String(body.sessionId) : undefined,
     goalId: body.goalId ? String(body.goalId) : undefined,
@@ -994,6 +997,13 @@ function applyRelease(body) {
   if (!removed) throw new Error('没有可释放的认领');
   return removed;
 }
+
+const POST_ACTIONS = {
+  '/move': applyMove,
+  '/update': applyUpdate,
+  '/delete': applyDelete,
+  '/release': applyRelease,
+};
 
 function registerApi(ctx) {
   const webServer = ctx.get?.('webServer') ?? ctx.webServer;
@@ -1014,23 +1024,9 @@ function registerApi(ctx) {
 
       const action = url.pathname.slice(API_PREFIX.length);
       if (req.method === 'GET' && action === '/state') return json(res, 200, statePayload());
-      if (req.method === 'POST' && action === '/move') {
-        applyMove(await readBody(req));
-        await save();
-        return json(res, 200, statePayload());
-      }
-      if (req.method === 'POST' && action === '/update') {
-        applyUpdate(await readBody(req));
-        await save();
-        return json(res, 200, statePayload());
-      }
-      if (req.method === 'POST' && action === '/delete') {
-        applyDelete(await readBody(req));
-        await save();
-        return json(res, 200, statePayload());
-      }
-      if (req.method === 'POST' && action === '/release') {
-        applyRelease(await readBody(req));
+      const write = req.method === 'POST' ? POST_ACTIONS[action] : null;
+      if (write) {
+        write(await readBody(req));
         await save();
         return json(res, 200, statePayload());
       }

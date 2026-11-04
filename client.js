@@ -58,8 +58,6 @@ window.__ModuleLoader__.load({
       '[data-dgb] .dgb-card-actions{display:flex;align-items:center;gap:2px;flex:none;opacity:0;transition:opacity .1s ease}',
       '[data-dgb] .dgb-card:hover .dgb-card-actions{opacity:1}',
       '[data-dgb] .dgb-donewhen{margin-top:4px;font-size:12px;color:var(--dsw-alias-label-tertiary,#8a919e);overflow-wrap:anywhere}',
-      '[data-dgb] .dgb-meta{margin-top:4px;font-size:12px;color:var(--dsw-alias-label-tertiary,#8a919e);overflow-wrap:anywhere}',
-      '[data-dgb] .dgb-warn{color:var(--dsw-alias-state-warning-primary,#c98a00)}',
       '[data-dgb] .dgb-items{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:3px}',
       '[data-dgb] .dgb-item{display:grid;grid-template-columns:6px minmax(0,1fr);column-gap:8px;align-items:start;font-size:12.5px;line-height:19px;padding:2px;border-radius:5px}',
       '[data-dgb] .dgb-dot{width:6px;height:6px;margin-top:7px;border-radius:50%;background:var(--dsw-alias-label-tertiary,#b0b6c0)}',
@@ -250,6 +248,8 @@ window.__ModuleLoader__.load({
       return label || '未知会话';
     }
 
+    const sessionLabels = (list) => list.map((s) => sessionName(s.sessionId, s.label)).join('、');
+
     function ItemRow({ item }) {
       const owner = item.owner;
       const [expanded, setExpanded] = useState(false);
@@ -296,12 +296,10 @@ window.__ModuleLoader__.load({
       const open = goal.items.filter((item) => item.status !== 'done');
       const done = goal.items.length - open.length;
       const pct = goal.items.length === 0 ? 0 : Math.round((done / goal.items.length) * 100);
-      const needsPointer = status === 'done' && !goal.pointer;
       const sessions = goal.sessions ?? [];
       const liveSessions = sessions.filter((s) => !s.stale);
       const idleSessions = sessions.filter((s) => s.stale);
       const looseDoing = goal.items.filter((i) => i.status === 'doing' && !i.owner?.sessionId).length;
-      const sessionLabels = (list) => list.map((s) => sessionName(s.sessionId, s.label)).join('、');
       const sessionBadge =
         sessions.length === 0
           ? looseDoing > 0
@@ -372,7 +370,7 @@ window.__ModuleLoader__.load({
                   h(Icon, { name: 'pause' }),
                 )
               : null,
-            status === 'suspended' || status === 'done'
+            status === 'suspended'
               ? h(
                   'button',
                   { className: 'dgb-iconbtn', title: '恢复（重新排队）', onClick: () => onStatus('active') },
@@ -387,16 +385,6 @@ window.__ModuleLoader__.load({
           ),
         ),
         goal.doneWhen ? h('div', { className: 'dgb-donewhen' }, '怎样算做完：' + goal.doneWhen) : null,
-        status === 'done'
-          ? h(
-              'div',
-              { className: 'dgb-meta' },
-              '完成于 ' + (goal.completedAt || '?') + ' · 产出：' + (goal.pointer || '（未填）'),
-            )
-          : null,
-        needsPointer
-          ? h('div', { className: 'dgb-meta dgb-warn' }, '缺产出指针 · 下一次对话会自动核对产出并归档')
-          : null,
         goal.items.length > 0
           ? h(
               'ul',
@@ -652,7 +640,11 @@ window.__ModuleLoader__.load({
               h('span', null, '条目 ', h('b', null, goals.reduce((n, g) => n + g.items.length, 0))),
             ),
             (() => {
-              const looseSessions = (state?.sessions ?? []).filter((s) => !s.hasCard);
+              // 只提醒「这会儿还在干活」的会话：登记表留 2 小时，面板别把早就收工的会话也拉出来。
+              const fresh = Date.now() - 30 * 60 * 1000;
+              const looseSessions = (state?.sessions ?? []).filter(
+                (s) => !s.hasCard && s.inProject !== false && (s.lastSeen ?? 0) >= fresh,
+              );
               if (looseSessions.length === 0) return null;
               const names = looseSessions
                 .map((s) => `${sessionName(s.id, s.label)}（${s.turns} 轮）`)
