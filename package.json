@@ -47,6 +47,11 @@
     "client": {
       "platform": "web",
       "immediately": true
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.2.1-rc.5": "compatible"
+      }
     }
   }
 }

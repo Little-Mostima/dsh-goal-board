@@ -1,0 +1,6 @@
+url: https://github.com/Little-Mostima/dsh-goal-board
+name: Little-Mostima/dsh-goal-board
+category: workflow
+description:
+  en: 'Cross-session goal board: projects, goals and items in three levels; each turn injects the current work into the agent, stale claims auto-release, finished goals auto-archive.'
+  zh: '跨会话目标清单：项目、目标、条目三层记账，每轮把当前工作注入给 agent，认领到期自动释放，做完的目标自动归档。'
