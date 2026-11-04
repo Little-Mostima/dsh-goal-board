@@ -154,6 +154,16 @@ ok(
   'status=' + moved.data.projects[0].goals[0].status,
 );
 
+// 手动删掉的卡要留墓碑：注入里点名「不要重建」，墓碑文件也落盘。
+await upd({ action: 'delete_goal', goal: '冒烟目标', confirm: true });
+const injection3 = promptCtx.text({ agent });
+const tombRaw = JSON.parse(await readFile(path.join(home, 'goal-board', 'tombstones.json'), 'utf8'));
+ok(
+  '删目标留墓碑并注入',
+  /已删除的目标/.test(injection3) && /冒烟目标/.test(injection3) && tombRaw.some((t) => t.title === '冒烟目标'),
+  injection3.split('\n')[0],
+);
+
 await rm(home, { recursive: true, force: true });
 console.log(results.join('\n'));
 process.exit(results.some((l) => l.startsWith('FAIL')) ? 1 : 0);

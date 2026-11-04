@@ -519,6 +519,8 @@ window.__ModuleLoader__.load({
         return () => clearInterval(timer);
       }, [refresh]);
 
+      // 有会话在干活却没卡：不打扰用户，也不冒充用户发消息——
+      // 由插件每轮注入的清单提示去提醒那个会话自己开卡。
       const projects = state?.projects ?? [];
       const project = projects.find((p) => p.id === projectId) || projects[0] || null;
 
@@ -639,22 +641,6 @@ window.__ModuleLoader__.load({
               h('span', null, '搁置 ', h('b', null, suspended.length)),
               h('span', null, '条目 ', h('b', null, goals.reduce((n, g) => n + g.items.length, 0))),
             ),
-            (() => {
-              // 只提醒「这会儿还在干活」的会话：登记表留 2 小时，面板别把早就收工的会话也拉出来。
-              const fresh = Date.now() - 30 * 60 * 1000;
-              const looseSessions = (state?.sessions ?? []).filter(
-                (s) => !s.hasCard && s.inProject !== false && (s.lastSeen ?? 0) >= fresh,
-              );
-              if (looseSessions.length === 0) return null;
-              const names = looseSessions
-                .map((s) => `${sessionName(s.id, s.label)}（${s.turns} 轮）`)
-                .join('、');
-              return h(
-                'div',
-                { className: 'dgb-hint' },
-                `⚠ 有 ${looseSessions.length} 个会话在干活但清单里没卡：${names}。去那个会话说一句「把这次进度写进目标清单」就能补上。`,
-              );
-            })(),
             project
               ? h(
                   'div',

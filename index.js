@@ -20,6 +20,7 @@ export const inject = ['tools', 'systemPrompt'];
 const HOME = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
 const DATA_DIR = path.join(HOME, 'goal-board');
 const DATA_FILE = path.join(DATA_DIR, 'data.json');
+const TOMB_FILE = path.join(DATA_DIR, 'tombstones.json');
 const API_PREFIX = '/goal-board/api';
 const API_TOKEN = randomBytes(24).toString('hex');
 const INDEX_GLOBAL = '__DSH_GOAL_BOARD__';
@@ -29,7 +30,7 @@ const ITEM_STATUSES = ['todo', 'doing', 'done', 'blocked'];
 const GOAL_STATUSES = ['active', 'suspended', 'done'];
 
 /** @type {{version:number, projects:any[], archive:any[]}} */
-let data = { version: 1, projects: [], archive: [], sessions: {} };
+let data = { version: 1, projects: [], archive: [], tombstones: [], sessions: {} };
 let saveChain = Promise.resolve();
 /** @type {null | ((session:any)=>string|null)} */
 let wdGet = null;
@@ -263,6 +264,7 @@ async function load() {
         version: 1,
         projects: parsed.projects,
         archive: Array.isArray(parsed.archive) ? parsed.archive : [],
+        tombstones: Array.isArray(parsed.tombstones) ? parsed.tombstones : [],
         sessions: parsed.sessions && typeof parsed.sessions === 'object' ? parsed.sessions : {},
       };
       for (const project of data.projects) {
@@ -279,10 +281,19 @@ async function load() {
       console.warn('[dsh-goal-board] 读取清单失败：' + String(e?.message ?? e));
     }
   }
+  try {
+    const raw = await readFile(TOMB_FILE, 'utf8');
+    const list = JSON.parse(raw);
+    if (Array.isArray(list)) data.tombstones = list;
+  } catch {
+    /* 还没有墓碑文件 */
+  }
 }
 
 function save() {
-  const snapshot = JSON.stringify(data, null, 2);
+  // 墓碑单独存一个文件：删掉的卡不能被后来的保存覆盖掉。
+  const { tombstones, ...rest } = data;
+  const snapshot = JSON.stringify(rest, null, 2);
   saveChain = saveChain
     .then(async () => {
       await mkdir(DATA_DIR, { recursive: true });
@@ -292,6 +303,13 @@ function save() {
       console.warn('[dsh-goal-board] 保存清单失败：' + String(e?.message ?? e));
     });
   return saveChain;
+}
+
+function saveTombstones() {
+  const snapshot = JSON.stringify(data.tombstones ?? [], null, 2);
+  return writeFile(TOMB_FILE, snapshot, 'utf8').catch((e) => {
+    console.warn('[dsh-goal-board] 保存墓碑失败：' + String(e?.message ?? e));
+  });
 }
 
 // ---------------------------------------------------------------- 渲染
@@ -338,20 +356,28 @@ function renderInjection(agent) {
   const active = project.goals.filter((g) => g.status === 'active');
   const suspended = project.goals.filter((g) => g.status === 'suspended');
   const pendingArchive = project.goals.filter((g) => g.status === 'done' && !g.pointer);
+  // 用户手动删掉的目标：agent 不许重建、不许接着做。
+  const tombstones = (data.tombstones ?? []).filter((t) => t.projectId === project.id).slice(-6);
+  const tombLine = tombstones.length
+    ? `已删除的目标（用户手动删的，不要重建、不要接着做）：${tombstones.map((t) => `「${t.title}」`).join('、')}`
+    : '';
   if (active.length === 0 && suspended.length === 0) {
     if (pendingArchive.length > 0) {
       return (
+        (tombLine ? tombLine + '\n' : '') +
         `【目标清单】项目「${project.name}」没有进行中的目标；待归档（已完成但缺产出指针）：` +
         pendingArchive.map((g) => `「${g.title}」`).join('、') +
         '。这轮收工前核对它们的实际产出，用 complete_goal 填产出指针归档。'
       );
     }
     return (
+      (tombLine ? tombLine + '\n' : '') +
       `【目标清单】项目「${project.name}」还没有进行中的目标。你现在要动手就直接 goal_board_update add_goal 开一张卡（不用问用户），doneWhen 写清怎样算做完。`
     );
   }
 
   const lines = [`【目标清单】项目：${project.name}`];
+  if (tombLine) lines.push(tombLine);
   if (!mine) {
     lines.push(
       `⚠ 本会话（${sessionInfo(agent).label}）在清单里还没有任何记录：你正在做的事只要超过一两步，就先 add_goal 开卡（不用问用户）、add_item 记账，否则用户看不到你做到哪了。`,
@@ -543,6 +569,20 @@ function archiveGoal(project, goal, pointer) {
       pointer,
     });
   }
+}
+
+// 用户手动删掉的目标留个墓碑：注入时告诉 agent 别再重建、别再接着做。
+function tombstone(project, goal) {
+  data.tombstones = data.tombstones ?? [];
+  if (data.tombstones.some((t) => t.goalId === goal.id)) return;
+  data.tombstones.push({
+    projectId: project.id,
+    goalId: goal.id,
+    title: goal.title,
+    deletedAt: nowStamp(),
+  });
+  if (data.tombstones.length > 20) data.tombstones = data.tombstones.slice(-20);
+  saveTombstones();
 }
 
 // ---------------------------------------------------------------- 工具
@@ -818,6 +858,7 @@ function updateTool(defineTool) {
         }
         case 'delete_goal': {
           if (!args.confirm) throw new Error('delete_goal 需要 confirm:true（先问用户，确认后再删）');
+          tombstone(project, goal);
           project.goals = project.goals.filter((g) => g.id !== goal.id);
           break;
         }
@@ -979,9 +1020,10 @@ function applyDelete(body) {
     return;
   }
   if (body.goalId) {
-    const before = project.goals.length;
+    const goal = project.goals.find((g) => g.id === body.goalId);
+    if (!goal) throw new Error('目标不存在');
+    tombstone(project, goal);
     project.goals = project.goals.filter((g) => g.id !== body.goalId);
-    if (project.goals.length === before) throw new Error('目标不存在');
     return;
   }
   throw new Error('要删什么？给 goalId 或 itemId');
