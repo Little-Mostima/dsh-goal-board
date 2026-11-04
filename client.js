@@ -651,6 +651,18 @@ window.__ModuleLoader__.load({
               h('span', null, '搁置 ', h('b', null, suspended.length)),
               h('span', null, '条目 ', h('b', null, goals.reduce((n, g) => n + g.items.length, 0))),
             ),
+            (() => {
+              const looseSessions = (state?.sessions ?? []).filter((s) => !s.hasCard);
+              if (looseSessions.length === 0) return null;
+              const names = looseSessions
+                .map((s) => `${sessionName(s.id, s.label)}（${s.turns} 轮）`)
+                .join('、');
+              return h(
+                'div',
+                { className: 'dgb-hint' },
+                `⚠ 有 ${looseSessions.length} 个会话在干活但清单里没卡：${names}。去那个会话说一句「把这次进度写进目标清单」就能补上。`,
+              );
+            })(),
             project
               ? h(
                   'div',

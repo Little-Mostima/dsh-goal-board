@@ -29,7 +29,7 @@ const ITEM_STATUSES = ['todo', 'doing', 'done', 'blocked'];
 const GOAL_STATUSES = ['active', 'suspended', 'done'];
 
 /** @type {{version:number, projects:any[], archive:any[]}} */
-let data = { version: 1, projects: [], archive: [] };
+let data = { version: 1, projects: [], archive: [], sessions: {} };
 let saveChain = Promise.resolve();
 /** @type {null | ((session:any)=>string|null)} */
 let wdGet = null;
@@ -132,8 +132,7 @@ function touchClaims(project, meId) {
   if (changed) save().catch(() => {});
 }
 
-/** 把某个会话（默认：本会话）在这些条目上的认领摘掉。 */
-function releaseClaims(project, { sessionId, goalId, itemId }) {
+/** 把某个会话（默认：本会话）在这些条目上的认领摘掉。 */function releaseClaims(project, { sessionId, goalId, itemId }) {
   let removed = 0;
   for (const goal of project.goals ?? []) {
     if (goalId && goal.id !== goalId) continue;
@@ -146,6 +145,43 @@ function releaseClaims(project, { sessionId, goalId, itemId }) {
     }
   }
   return removed;
+}
+
+/** 会话存活登记：每轮注入都会刷新，用来回答"哪些会话在跑、有没有记账"。 */
+const SESSION_KEEP_MS = 2 * 60 * 60 * 1000;
+
+function hasCardFor(project, meId) {
+  if (!project || !meId) return false;
+  return (project.goals ?? []).some(
+    (g) => g.createdBy === meId || (g.items ?? []).some((i) => i.owner?.sessionId === meId),
+  );
+}
+
+function touchSession(agent, cwd, hasCard) {
+  const me = sessionInfo(agent);
+  if (!me.id) return;
+  if (!data.sessions || typeof data.sessions !== 'object') data.sessions = {};
+  const now = Date.now();
+  const rec = data.sessions[me.id] ?? { id: me.id, firstSeen: now, turns: 0 };
+  rec.label = me.label;
+  rec.cwd = cwd || rec.cwd || '';
+  rec.turns = (rec.turns || 0) + 1;
+  rec.lastSeen = now;
+  rec.hasCard = !!hasCard;
+  data.sessions[me.id] = rec;
+  for (const [id, r] of Object.entries(data.sessions)) {
+    if (!r?.lastSeen || now - r.lastSeen > SESSION_KEEP_MS) delete data.sessions[id];
+  }
+  save().catch(() => {});
+}
+
+/** 最近 2 小时还活着的会话，新的在前。 */
+function recentSessions(limit = 12) {
+  const cutoff = Date.now() - SESSION_KEEP_MS;
+  return Object.values(data.sessions ?? {})
+    .filter((r) => r && r.lastSeen > cutoff)
+    .sort((a, b) => b.lastSeen - a.lastSeen)
+    .slice(0, limit);
 }
 
 function findProjectByCwd(cwd) {
@@ -226,6 +262,7 @@ async function load() {
         version: 1,
         projects: parsed.projects,
         archive: Array.isArray(parsed.archive) ? parsed.archive : [],
+        sessions: parsed.sessions && typeof parsed.sessions === 'object' ? parsed.sessions : {},
       };
       for (const project of data.projects) {
         for (const goal of project.goals ?? []) {
@@ -288,11 +325,14 @@ function renderInjection(agent) {
   sweepStaleClaims();
   const project = findProjectByCwd(cwd);
   if (!project) {
+    touchSession(agent, cwd, false);
     return `【目标清单】当前文件夹 ${cwd} 还没归属任何项目。要在这里开工就直接 goal_board_update add_goal——会按这个文件夹自动建项目「${path.basename(cwd)}」；如果是已有项目的子目录，用 bind_folder 绑过去。`;
   }
 
   const meId = sessionInfo(agent).id;
   touchClaims(project, meId);
+  const mine = hasCardFor(project, meId);
+  touchSession(agent, cwd, mine);
 
   const active = project.goals.filter((g) => g.status === 'active');
   const suspended = project.goals.filter((g) => g.status === 'suspended');
@@ -305,10 +345,17 @@ function renderInjection(agent) {
         '。这轮收工前核对它们的实际产出，用 complete_goal 填产出指针归档。'
       );
     }
-    return `【目标清单】项目「${project.name}」还没有进行中的目标。问用户要不要建一个。`;
+    return (
+      `【目标清单】项目「${project.name}」还没有进行中的目标。你现在要动手就直接 goal_board_update add_goal 开一张卡（不用问用户），doneWhen 写清怎样算做完。`
+    );
   }
 
   const lines = [`【目标清单】项目：${project.name}`];
+  if (!mine) {
+    lines.push(
+      `⚠ 本会话（${sessionInfo(agent).label}）在清单里还没有任何记录：你正在做的事只要超过一两步，就先 add_goal 开卡（不用问用户）、add_item 记账，否则用户看不到你做到哪了。`,
+    );
+  }
   const focus = active[0];
   if (focus) {
     lines.push(`主攻目标：${focus.title}（怎样算做完：${focus.doneWhen || '未填写'}）`);
@@ -375,7 +422,7 @@ function renderInjection(agent) {
   }
 
   lines.push(
-    '规则：按清单顺序做；要跳序必须在对话里说明理由；做完一条把下一条标 doing；目标完成必须填产出指针（归档后从清单删除）；新建/删除目标先问用户。',
+    '规则：按清单顺序做；要跳序必须在对话里说明理由；做完一条把下一条标 doing；目标完成必须填产出指针（归档后从清单删除）；清单里没有对应的卡就直接 add_goal 开一张（不用问用户），只有删除目标、改别人正在做的卡、归档前才先问用户。',
     '一张卡只放同一件事：换主题（哪怕同一个项目里的另一件事）就 add_goal 开新卡，别往现有卡里塞；一张卡超过 10 条时回头看是不是该拆成几张。',
     '记账纪律（每轮照做，别等用户催）：开工前先调 goal_board_update 把要做的条目标 doing（自动挂上本会话，面板「正在进行」可见）；做完立刻标 done 并在 note 里写一句结果；收工前核对一遍——动过手但清单没变，等于这轮没记账。',
   );
@@ -439,7 +486,7 @@ function ensureProject(ref, exec, { create = false, name = '' } = {}) {
   return project;
 }
 
-function ensureGoal(project, ref, { create = false, title = '', doneWhen = '' } = {}) {
+function ensureGoal(project, ref, { create = false, title = '', doneWhen = '', by = null } = {}) {
   const existing = goalRef(project, ref);
   if (existing) return existing;
   if (!create) return null;
@@ -451,6 +498,8 @@ function ensureGoal(project, ref, { create = false, title = '', doneWhen = '' } 
     items: [],
     completedAt: null,
     pointer: null,
+    // 哪张卡是哪个会话开的：面板要能回答"这个卡是谁在推进"。
+    createdBy: by || null,
   };
   project.goals.push(goal);
   return goal;
@@ -673,7 +722,12 @@ function updateTool(defineTool) {
       if (action === 'add_goal') {
         if (!args.title) throw new Error('add_goal 需要 title');
         if (!args.doneWhen) throw new Error('add_goal 需要 doneWhen（怎样算做完）');
-        const goal = ensureGoal(project, null, { create: true, title: args.title, doneWhen: args.doneWhen });
+        const goal = ensureGoal(project, null, {
+          create: true,
+          title: args.title,
+          doneWhen: args.doneWhen,
+          by: sessionInfo(exec.agent).id,
+        });
         await save();
         return { text: renderFull(project) + `\n\n已新建目标 ${goal.id}。` };
       }
@@ -849,6 +903,15 @@ function statePayload() {
       })),
     })),
     archive: data.archive.slice(-50).reverse(),
+    // 最近在跑、但可能没记账的会话：面板据此提醒"这个会话在干活却没卡"。
+    sessions: recentSessions().map((r) => ({
+      id: r.id,
+      label: r.label ?? '',
+      cwd: r.cwd ?? '',
+      turns: r.turns ?? 0,
+      hasCard: !!r.hasCard,
+      lastSeen: r.lastSeen ?? 0,
+    })),
   };
 }
 

@@ -62,6 +62,21 @@ await mod.apply(ctx);
 ok('pluggable 工具注册', !!tools.goal_board_read && !!tools.goal_board_update);
 ok('注入钩子注册', !!promptCtx);
 
+const readState = () =>
+  new Promise((resolve, reject) => {
+    const req = { method: 'GET', url: '/goal-board/api/state', headers: { 'x-goal-board': '1' } };
+    const res = {
+      headersSent: false,
+      statusCode: 0,
+      setHeader() {},
+      end(body) {
+        resolve(JSON.parse(body));
+      },
+      writeHead() {},
+    };
+    apiHandler(req, res).catch(reject);
+  });
+
 const exec = { agent };
 const upd = (args) => tools.goal_board_update.execute(args, exec);
 
@@ -76,19 +91,7 @@ ok('注入含拆卡规则', /一张卡只放同一件事/.test(injection));
 
 // 自动释放：认领后等 TTL 过期，面板读状态应该把条目退回 todo 并摘掉 owner。
 await new Promise((res) => setTimeout(res, 900));
-const state = await new Promise((resolve, reject) => {
-  const req = { method: 'GET', url: '/goal-board/api/state', headers: { 'x-goal-board': '1' } };
-  const res = {
-    headersSent: false,
-    statusCode: 0,
-    setHeader() {},
-    end(body) {
-      resolve(JSON.parse(body));
-    },
-    writeHead() {},
-  };
-  apiHandler(req, res).catch(reject);
-});
+const state = await readState();
 const goal = state.projects[0].goals[0];
 const item = goal.items[0];
 ok('过期认领自动释放', item.owner === null && item.status === 'todo', `owner=${JSON.stringify(item.owner)} status=${item.status}`);
@@ -97,6 +100,17 @@ ok('目标回到排队（无会话）', goal.sessions.length === 0);
 await new Promise((res) => setTimeout(res, 200));
 const raw = JSON.parse(await readFile(path.join(home, 'goal-board', 'data.json'), 'utf8'));
 ok('自动释放已落盘', raw.projects[0].goals[0].items[0].owner === null);
+
+// 会话登记：有卡的会话记为已记账；没卡的会话在注入里被点名，面板能看到。
+ok('有卡的会话记为已记账', (state.sessions ?? []).some((s) => s.id === 'sess-abcdef123456' && s.hasCard === true));
+
+const agent2 = { session: { header: { id: 'sess-second-999999', cwd: 'D:\\smoke-ws' } } };
+const injection2 = promptCtx.text({ agent: agent2 });
+ok('未记账会话被注入点名', /还没有任何记录/.test(injection2));
+await new Promise((res) => setTimeout(res, 150));
+const state2 = await readState();
+const loose = (state2.sessions ?? []).find((s) => s.id === 'sess-second-999999');
+ok('面板能看到未记账会话', !!loose && loose.hasCard === false && loose.turns >= 1, JSON.stringify(loose));
 
 await rm(home, { recursive: true, force: true });
 console.log(results.join('\n'));
