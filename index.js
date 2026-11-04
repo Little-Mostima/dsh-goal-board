@@ -520,7 +520,7 @@ function autoAdvance(goal, agent) {
   }
 }
 
-// 条目全做完 → 目标自动进"已完成"区（产出指针留空，归档前必须补）。
+// 条目全做完 → 目标状态转 done（产出指针留空，归档前必须补）。
 function normalizeGoal(goal) {
   if (goal.status !== 'active') return;
   if (!goal.items.length) return;
